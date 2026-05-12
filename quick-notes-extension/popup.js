@@ -254,67 +254,32 @@ class NoteManager {
         return false;
       }
 
-      const { backupDirectoryId } = await chrome.storage.local.get('backupDirectoryId');
-      let directoryEntry = null;
-
-      if (backupDirectoryId) {
-        try {
-          directoryEntry = await chrome.fileSystem.restoreEntry(backupDirectoryId, true);
-        } catch (error) {
-          console.log('无法恢复上次的备份目录，需要重新选择');
-        }
-      }
-
-      if (!directoryEntry) {
-        directoryEntry = await new Promise((resolve, reject) => {
-          chrome.fileSystem.chooseEntry({
-            type: 'openDirectory',
-            acceptsMultiple: false
-          }, resolve);
-        });
-
-        if (!directoryEntry) {
-          return false;
-        }
-
-        const retainedEntry = chrome.fileSystem.retainEntry(directoryEntry);
-        await chrome.storage.local.set({ backupDirectoryId: retainedEntry.id });
-      }
-
       for (const note of result.notes) {
         const fileName = `${note.title || 'untitled'}.txt`;
         const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+        const blob = new Blob([note.content || ''], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
         
-        const fileEntry = await new Promise((resolve, reject) => {
-          directoryEntry.getFile(safeFileName, { create: true }, resolve, reject);
-        });
-
-        const writable = await new Promise((resolve, reject) => {
-          fileEntry.createWriter(resolve, reject);
-        });
-
-        await new Promise((resolve, reject) => {
-          writable.onwriteend = resolve;
-          writable.onerror = reject;
-          writable.write(new Blob([note.content || ''], { type: 'text/plain' }));
-        });
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = safeFileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
       }
 
-      const metaFileEntry = await new Promise((resolve, reject) => {
-        directoryEntry.getFile('notes_meta.json', { create: true }, resolve, reject);
-      });
+      const metaBlob = new Blob([JSON.stringify(result.notes, null, 2)], { type: 'application/json' });
+      const metaUrl = URL.createObjectURL(metaBlob);
+      const metaLink = document.createElement('a');
+      metaLink.href = metaUrl;
+      metaLink.download = 'notes_meta.json';
+      document.body.appendChild(metaLink);
+      metaLink.click();
+      document.body.removeChild(metaLink);
+      URL.revokeObjectURL(metaUrl);
 
-      const metaWritable = await new Promise((resolve, reject) => {
-        metaFileEntry.createWriter(resolve, reject);
-      });
-
-      await new Promise((resolve, reject) => {
-        metaWritable.onwriteend = resolve;
-        metaWritable.onerror = reject;
-        metaWritable.write(new Blob([JSON.stringify(result.notes, null, 2)], { type: 'application/json' }));
-      });
-
-      alert(`成功导出 ${result.notes.length} 条笔记`);
+      alert(`成功导出 ${result.notes.length} 条笔记和元数据文件`);
       return true;
     } catch (error) {
       console.error('Error exporting notes:', error);
@@ -325,48 +290,26 @@ class NoteManager {
 
   async importNotes() {
     try {
-      const { backupDirectoryId } = await chrome.storage.local.get('backupDirectoryId');
-      let directoryEntry = null;
-
-      if (backupDirectoryId) {
-        try {
-          directoryEntry = await chrome.fileSystem.restoreEntry(backupDirectoryId, true);
-        } catch (error) {
-          console.log('无法恢复上次的备份目录，需要重新选择');
-        }
-      }
-
-      if (!directoryEntry) {
-        directoryEntry = await new Promise((resolve, reject) => {
-          chrome.fileSystem.chooseEntry({
-            type: 'openDirectory',
-            acceptsMultiple: false
-          }, resolve);
-        });
-
-        if (!directoryEntry) {
-          return false;
-        }
-
-        const retainedEntry = chrome.fileSystem.retainEntry(directoryEntry);
-        await chrome.storage.local.set({ backupDirectoryId: retainedEntry.id });
-      }
-
-      const dirReader = directoryEntry.createReader();
-      const entries = await new Promise((resolve, reject) => {
-        dirReader.readEntries(resolve, reject);
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.txt';
+      
+      const files = await new Promise((resolve) => {
+        input.onchange = () => resolve(Array.from(input.files));
+        input.click();
       });
+
+      if (!files || files.length === 0) {
+        return false;
+      }
 
       let importedCount = 0;
       let skippedCount = 0;
 
-      for (const entry of entries) {
-        if (entry.isFile && entry.name.endsWith('.txt')) {
+      for (const file of files) {
+        if (file.name.endsWith('.txt')) {
           try {
-            const file = await new Promise((resolve, reject) => {
-              entry.file(resolve, reject);
-            });
-
             const content = await new Promise((resolve, reject) => {
               const reader = new FileReader();
               reader.onload = (e) => resolve(e.target.result);
@@ -374,7 +317,7 @@ class NoteManager {
               reader.readAsText(file);
             });
 
-            const title = entry.name.replace('.txt', '');
+            const title = file.name.replace('.txt', '');
 
             const existingNote = this.notes.find(n => n.title === title);
             if (existingNote) {
@@ -401,7 +344,7 @@ class NoteManager {
             }
             importedCount++;
           } catch (error) {
-            console.error('Error importing file:', entry.name, error);
+            console.error('Error importing file:', file.name, error);
           }
         }
       }
