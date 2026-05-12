@@ -245,6 +245,189 @@ class NoteManager {
     }
   }
 
+  async exportNotes() {
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'getNotes' });
+      
+      if (!result.success || !result.notes || result.notes.length === 0) {
+        alert('没有笔记可导出');
+        return false;
+      }
+
+      const { backupDirectoryId } = await chrome.storage.local.get('backupDirectoryId');
+      let directoryEntry = null;
+
+      if (backupDirectoryId) {
+        try {
+          directoryEntry = await chrome.fileSystem.restoreEntry(backupDirectoryId, true);
+        } catch (error) {
+          console.log('无法恢复上次的备份目录，需要重新选择');
+        }
+      }
+
+      if (!directoryEntry) {
+        directoryEntry = await new Promise((resolve, reject) => {
+          chrome.fileSystem.chooseEntry({
+            type: 'openDirectory',
+            acceptsMultiple: false
+          }, resolve);
+        });
+
+        if (!directoryEntry) {
+          return false;
+        }
+
+        const retainedEntry = chrome.fileSystem.retainEntry(directoryEntry);
+        await chrome.storage.local.set({ backupDirectoryId: retainedEntry.id });
+      }
+
+      for (const note of result.notes) {
+        const fileName = `${note.title || 'untitled'}.txt`;
+        const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+        
+        const fileEntry = await new Promise((resolve, reject) => {
+          directoryEntry.getFile(safeFileName, { create: true }, resolve, reject);
+        });
+
+        const writable = await new Promise((resolve, reject) => {
+          fileEntry.createWriter(resolve, reject);
+        });
+
+        await new Promise((resolve, reject) => {
+          writable.onwriteend = resolve;
+          writable.onerror = reject;
+          writable.write(new Blob([note.content || ''], { type: 'text/plain' }));
+        });
+      }
+
+      const metaFileEntry = await new Promise((resolve, reject) => {
+        directoryEntry.getFile('notes_meta.json', { create: true }, resolve, reject);
+      });
+
+      const metaWritable = await new Promise((resolve, reject) => {
+        metaFileEntry.createWriter(resolve, reject);
+      });
+
+      await new Promise((resolve, reject) => {
+        metaWritable.onwriteend = resolve;
+        metaWritable.onerror = reject;
+        metaWritable.write(new Blob([JSON.stringify(result.notes, null, 2)], { type: 'application/json' }));
+      });
+
+      alert(`成功导出 ${result.notes.length} 条笔记`);
+      return true;
+    } catch (error) {
+      console.error('Error exporting notes:', error);
+      alert('导出失败: ' + error.message);
+      return false;
+    }
+  }
+
+  async importNotes() {
+    try {
+      const { backupDirectoryId } = await chrome.storage.local.get('backupDirectoryId');
+      let directoryEntry = null;
+
+      if (backupDirectoryId) {
+        try {
+          directoryEntry = await chrome.fileSystem.restoreEntry(backupDirectoryId, true);
+        } catch (error) {
+          console.log('无法恢复上次的备份目录，需要重新选择');
+        }
+      }
+
+      if (!directoryEntry) {
+        directoryEntry = await new Promise((resolve, reject) => {
+          chrome.fileSystem.chooseEntry({
+            type: 'openDirectory',
+            acceptsMultiple: false
+          }, resolve);
+        });
+
+        if (!directoryEntry) {
+          return false;
+        }
+
+        const retainedEntry = chrome.fileSystem.retainEntry(directoryEntry);
+        await chrome.storage.local.set({ backupDirectoryId: retainedEntry.id });
+      }
+
+      const dirReader = directoryEntry.createReader();
+      const entries = await new Promise((resolve, reject) => {
+        dirReader.readEntries(resolve, reject);
+      });
+
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (const entry of entries) {
+        if (entry.isFile && entry.name.endsWith('.txt')) {
+          try {
+            const file = await new Promise((resolve, reject) => {
+              entry.file(resolve, reject);
+            });
+
+            const content = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target.result);
+              reader.onerror = reject;
+              reader.readAsText(file);
+            });
+
+            const title = entry.name.replace('.txt', '');
+
+            const existingNote = this.notes.find(n => n.title === title);
+            if (existingNote) {
+              const confirmOverwrite = confirm(`笔记 "${title}" 已存在，是否覆盖？`);
+              if (!confirmOverwrite) {
+                skippedCount++;
+                continue;
+              }
+              const note = {
+                ...existingNote,
+                content: content,
+                updatedAt: Date.now()
+              };
+              await chrome.runtime.sendMessage({ type: 'saveNote', note: note });
+            } else {
+              const newNote = {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                title: title,
+                content: content,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              };
+              await chrome.runtime.sendMessage({ type: 'saveNote', note: newNote });
+            }
+            importedCount++;
+          } catch (error) {
+            console.error('Error importing file:', entry.name, error);
+          }
+        }
+      }
+
+      await this.listNotes();
+      
+      let message = '';
+      if (importedCount > 0) {
+        message += `成功导入 ${importedCount} 条笔记`;
+      }
+      if (skippedCount > 0) {
+        message += (message ? '\n' : '') + `跳过 ${skippedCount} 条已存在的笔记`;
+      }
+      if (importedCount === 0 && skippedCount === 0) {
+        message = '没有找到可导入的笔记文件';
+      }
+      
+      alert(message);
+      return true;
+    } catch (error) {
+      console.error('Error importing notes:', error);
+      alert('导入失败: ' + error.message);
+      return false;
+    }
+  }
+
   updateCharCount() {
     const content = document.getElementById('noteEditor').value;
     const count = content.length;
@@ -372,6 +555,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     await noteManager.listNotes();
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', async () => {
+    await noteManager.exportNotes();
+  });
+
+  document.getElementById('importBtn').addEventListener('click', async () => {
+    await noteManager.importNotes();
   });
 
   document.getElementById('toggleSidebar').addEventListener('click', () => {
