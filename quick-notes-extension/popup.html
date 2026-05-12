@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuickNotes</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <button id="newNoteBtn" class="btn btn-primary" title="新建笔记">
+          <span class="icon">+</span>
+          <span class="btn-text">新建</span>
+        </button>
+      </div>
+      <div class="toolbar-center">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="搜索笔记..." />
+          <button id="searchBtn" class="btn btn-icon" title="搜索">🔍</button>
+        </div>
+      </div>
+      <div class="toolbar-right">
+        <button id="refreshBtn" class="btn btn-icon" title="刷新">↻</button>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <aside class="notes-sidebar">
+        <div class="sidebar-header">
+          <h3>笔记列表</h3>
+          <button id="toggleSidebar" class="btn btn-icon" title="收起">◀</button>
+        </div>
+        <div class="notes-list" id="notesList">
+          <div class="loading">加载中...</div>
+        </div>
+      </aside>
+      
+      <main class="editor-container">
+        <div class="editor-header">
+          <input type="text" id="noteTitle" class="note-title" placeholder="笔记标题" readonly />
+          <div class="editor-actions">
+            <button id="saveBtn" class="btn btn-secondary" title="保存">💾 保存</button>
+            <button id="deleteBtn" class="btn btn-danger" title="删除">🗑️</button>
+          </div>
+        </div>
+        
+        <div class="editor-wrapper">
+          <textarea id="noteEditor" placeholder="开始记录你的想法..."></textarea>
+        </div>
+        
+        <div class="save-status" id="saveStatus">
+          <span class="status-text">等待输入</span>
+        </div>
+      </main>
+    </div>
+
+    <footer class="status-bar">
+      <div class="status-left">
+        <span id="currentFile">未选择文件</span>
+      </div>
+      <div class="status-center">
+        <span id="lastModified">-</span>
+      </div>
+      <div class="status-right">
+        <span id="charCount">0 字符</span>
+      </div>
+    </footer>
+  </div>
+
+  <div class="modal" id="newNoteModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>创建新笔记</h3>
+        <button class="modal-close" id="closeModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label for="newNoteName">文件名：</label>
+        <input type="text" id="newNoteName" placeholder="输入文件名" />
+        <p class="hint">文件名将作为txt文档的名称</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelNewNote">取消</button>
+        <button class="btn btn-primary" id="confirmNewNote">创建</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="deleteModal">
+    <div class="modal-content modal-small">
+      <div class="modal-header">
+        <h3>确认删除</h3>
+        <button class="modal-close" id="closeDeleteModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>确定要删除这个笔记吗？</p>
+        <p class="warning">此操作无法撤销</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="cancelDelete">取消</button>
+        <button class="btn btn-danger" id="confirmDelete">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="authModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>首次使用设置</h3>
+      </div>
+      <div class="modal-body">
+        <p>请选择存放笔记的文件夹</p>
+        <p class="hint">建议选择插件目录下的 notebooks 文件夹</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="chooseDirectory">选择文件夹</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
