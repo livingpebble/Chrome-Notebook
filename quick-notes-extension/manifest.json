@@ -4,8 +4,7 @@
   "version": "1.0",
   "description": "快速笔记扩展 - 记录灵感碎片",
   "permissions": [
-    "storage",
-    "fileSystem"
+    "storage"
   ],
   "action": {
     "default_popup": "popup.html",

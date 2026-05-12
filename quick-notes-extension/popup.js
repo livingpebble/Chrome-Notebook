@@ -254,32 +254,26 @@ class NoteManager {
         return false;
       }
 
+      const zip = new JSZip();
+
       for (const note of result.notes) {
         const fileName = `${note.title || 'untitled'}.txt`;
         const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
-        const blob = new Blob([note.content || ''], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = safeFileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        zip.file(safeFileName, note.content || '');
       }
 
-      const metaBlob = new Blob([JSON.stringify(result.notes, null, 2)], { type: 'application/json' });
-      const metaUrl = URL.createObjectURL(metaBlob);
-      const metaLink = document.createElement('a');
-      metaLink.href = metaUrl;
-      metaLink.download = 'notes_meta.json';
-      document.body.appendChild(metaLink);
-      metaLink.click();
-      document.body.removeChild(metaLink);
-      URL.revokeObjectURL(metaUrl);
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `notes_backup_${new Date().toISOString().split('T')[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
 
-      alert(`成功导出 ${result.notes.length} 条笔记和元数据文件`);
+      alert(`成功导出 ${result.notes.length} 条笔记到 ZIP 文件`);
       return true;
     } catch (error) {
       console.error('Error exporting notes:', error);
@@ -292,32 +286,28 @@ class NoteManager {
     try {
       const input = document.createElement('input');
       input.type = 'file';
-      input.multiple = true;
-      input.accept = '.txt';
+      input.accept = '.zip,.txt';
       
-      const files = await new Promise((resolve) => {
-        input.onchange = () => resolve(Array.from(input.files));
+      const file = await new Promise((resolve) => {
+        input.onchange = () => resolve(input.files[0]);
         input.click();
       });
 
-      if (!files || files.length === 0) {
+      if (!file) {
         return false;
       }
 
       let importedCount = 0;
       let skippedCount = 0;
 
-      for (const file of files) {
-        if (file.name.endsWith('.txt')) {
+      if (file.name.endsWith('.zip')) {
+        const zip = await JSZip.loadAsync(file);
+        const txtFiles = Object.keys(zip.files).filter(name => name.endsWith('.txt'));
+        
+        for (const fileName of txtFiles) {
           try {
-            const content = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = (e) => resolve(e.target.result);
-              reader.onerror = reject;
-              reader.readAsText(file);
-            });
-
-            const title = file.name.replace('.txt', '');
+            const content = await zip.files[fileName].async('text');
+            const title = fileName.replace('.txt', '');
 
             const existingNote = this.notes.find(n => n.title === title);
             if (existingNote) {
@@ -344,8 +334,43 @@ class NoteManager {
             }
             importedCount++;
           } catch (error) {
-            console.error('Error importing file:', file.name, error);
+            console.error('Error importing file:', fileName, error);
           }
+        }
+      } else if (file.name.endsWith('.txt')) {
+        const content = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target.result);
+          reader.onerror = reject;
+          reader.readAsText(file);
+        });
+
+        const title = file.name.replace('.txt', '');
+
+        const existingNote = this.notes.find(n => n.title === title);
+        if (existingNote) {
+          const confirmOverwrite = confirm(`笔记 "${title}" 已存在，是否覆盖？`);
+          if (!confirmOverwrite) {
+            skippedCount++;
+          } else {
+            const note = {
+              ...existingNote,
+              content: content,
+              updatedAt: Date.now()
+            };
+            await chrome.runtime.sendMessage({ type: 'saveNote', note: note });
+            importedCount++;
+          }
+        } else {
+          const newNote = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            title: title,
+            content: content,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          await chrome.runtime.sendMessage({ type: 'saveNote', note: newNote });
+          importedCount++;
         }
       }
 
