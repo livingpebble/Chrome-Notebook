@@ -64,7 +64,7 @@
         </div>
       </aside>
       
-      <main class="editor-container">
+      <main class="editor-container" id="editorContainer">
         <div class="editor-header">
           <input type="text" id="noteTitle" class="note-title" placeholder="笔记标题" />
           <div class="editor-actions">
@@ -92,6 +92,12 @@
           <span class="status-text">等待输入</span>
         </div>
       </main>
+      
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">📝</div>
+        <h3>还没有笔记</h3>
+        <p>点击左上角"新建"按钮创建第一个笔记</p>
+      </div>
     </div>
 
     <footer class="status-bar">

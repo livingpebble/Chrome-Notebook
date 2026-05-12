@@ -19,16 +19,32 @@ class NoteManager {
       if (result.success) {
         this.notes = result.notes.sort((a, b) => b.updatedAt - a.updatedAt);
         this.renderNotesList();
+        this.updateEditorVisibility();
         return this.notes;
       } else {
         this.notes = [];
         this.renderEmptyState('加载笔记列表失败');
+        this.updateEditorVisibility();
         return [];
       }
     } catch (error) {
       console.error('Error listing notes:', error);
       this.renderEmptyState('加载笔记列表失败');
+      this.updateEditorVisibility();
       return [];
+    }
+  }
+
+  updateEditorVisibility() {
+    const editorContainer = document.getElementById('editorContainer');
+    const emptyState = document.getElementById('emptyState');
+    
+    if (this.notes.length === 0) {
+      editorContainer.style.display = 'none';
+      emptyState.classList.add('show');
+    } else {
+      editorContainer.style.display = 'flex';
+      emptyState.classList.remove('show');
     }
   }
 
