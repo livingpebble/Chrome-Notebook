@@ -1,73 +1,30 @@
 class NoteManager {
   constructor() {
-    this.currentEntry = null;
+    this.currentNote = null;
     this.currentContent = '';
     this.autoSaveTimer = null;
-    this.notebooksDir = null;
     this.notes = [];
   }
 
   async init() {
-    const result = await chrome.runtime.sendMessage({ type: 'getNotebooksDirectory' });
-    
-    if (result.success) {
-      this.notebooksDir = result.entry;
-      await this.retainDirectory(result.entry);
-      await this.listNotes();
-      await this.openLatestNote();
-      return true;
-    } else {
-      this.showAuthModal();
-      return false;
-    }
-  }
-
-  async retainDirectory(entry) {
-    await chrome.runtime.sendMessage({
-      type: 'retainEntry',
-      entry: entry
-    });
-  }
-
-  showAuthModal() {
-    document.getElementById('authModal').classList.add('show');
-    document.getElementById('chooseDirectory').addEventListener('click', async () => {
-      const result = await chrome.runtime.sendMessage({ type: 'chooseDirectory' });
-      if (result.success) {
-        this.notebooksDir = result.entry;
-        document.getElementById('authModal').classList.remove('show');
-        await this.retainDirectory(result.entry);
-        await this.listNotes();
-        await this.openLatestNote();
-      }
-    });
+    await this.listNotes();
+    await this.openLatestNote();
+    return true;
   }
 
   async listNotes() {
     try {
-      const dirReader = this.notebooksDir.createReader();
-      const entries = await new Promise((resolve, reject) => {
-        dirReader.readEntries(resolve, reject);
-      });
-
-      this.notes = [];
-      for (const entry of entries) {
-        if (entry.isFile && entry.name.endsWith('.txt')) {
-          const file = await new Promise((resolve, reject) => {
-            entry.file(resolve, reject);
-          });
-          this.notes.push({
-            entry: entry,
-            name: entry.name,
-            modifiedTime: file.lastModifiedDate,
-            size: file.size
-          });
-        }
+      const result = await chrome.runtime.sendMessage({ type: 'getNotes' });
+      
+      if (result.success) {
+        this.notes = result.notes.sort((a, b) => b.updatedAt - a.updatedAt);
+        this.renderNotesList();
+        return this.notes;
+      } else {
+        this.notes = [];
+        this.renderEmptyState('加载笔记列表失败');
+        return [];
       }
-
-      this.notes.sort((a, b) => b.modifiedTime - a.modifiedTime);
-      this.renderNotesList();
-      return this.notes;
     } catch (error) {
       console.error('Error listing notes:', error);
       this.renderEmptyState('加载笔记列表失败');
@@ -79,7 +36,7 @@ class NoteManager {
     const notesList = document.getElementById('notesList');
     
     const filteredNotes = filter 
-      ? this.notes.filter(note => note.name.toLowerCase().includes(filter.toLowerCase()))
+      ? this.notes.filter(note => note.title.toLowerCase().includes(filter.toLowerCase()))
       : this.notes;
 
     if (filteredNotes.length === 0) {
@@ -92,19 +49,19 @@ class NoteManager {
     }
 
     notesList.innerHTML = filteredNotes.map(note => `
-      <div class="note-item ${this.currentEntry && this.currentEntry.name === note.name ? 'active' : ''}" 
-           data-name="${note.name}">
-        <div class="note-item-title">${this.getDisplayName(note.name)}</div>
-        <div class="note-item-time">${this.formatTime(note.modifiedTime)}</div>
+      <div class="note-item ${this.currentNote && this.currentNote.id === note.id ? 'active' : ''}" 
+           data-id="${note.id}">
+        <div class="note-item-title">${note.title}</div>
+        <div class="note-item-time">${this.formatTime(note.updatedAt)}</div>
       </div>
     `).join('');
 
     notesList.querySelectorAll('.note-item').forEach(item => {
       item.addEventListener('click', () => {
-        const noteName = item.dataset.name;
-        const note = this.notes.find(n => n.name === noteName);
+        const noteId = item.dataset.id;
+        const note = this.notes.find(n => n.id === noteId);
         if (note) {
-          this.openNote(note.entry);
+          this.openNote(note);
         }
       });
     });
@@ -119,10 +76,6 @@ class NoteManager {
         <p>点击"新建"创建第一个笔记</p>
       </div>
     `;
-  }
-
-  getDisplayName(filename) {
-    return filename.replace('.txt', '');
   }
 
   formatTime(timestamp) {
@@ -148,44 +101,28 @@ class NoteManager {
 
   async openLatestNote() {
     if (this.notes.length > 0) {
-      await this.openNote(this.notes[0].entry);
+      await this.openNote(this.notes[0]);
     }
   }
 
-  async openNote(entry) {
+  async openNote(note) {
     try {
       if (this.autoSaveTimer) {
         clearTimeout(this.autoSaveTimer);
         await this.saveCurrentNote();
       }
 
-      this.currentEntry = entry;
-      const file = await new Promise((resolve, reject) => {
-        entry.file(resolve, reject);
-      });
-
-      const content = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = reject;
-        reader.readAsText(file);
-      });
-
-      this.currentContent = content;
+      this.currentNote = note;
+      this.currentContent = note.content;
       
-      document.getElementById('noteTitle').value = this.getDisplayName(entry.name);
-      document.getElementById('noteEditor').value = content;
-      document.getElementById('currentFile').textContent = entry.name;
-      document.getElementById('lastModified').textContent = this.formatTime(file.lastModifiedDate);
+      document.getElementById('noteTitle').value = note.title;
+      document.getElementById('noteEditor').value = note.content;
+      document.getElementById('currentFile').textContent = note.title + '.txt';
+      document.getElementById('lastModified').textContent = this.formatTime(note.updatedAt);
       this.updateCharCount();
       this.updateSaveStatus('saved');
       
       this.renderNotesList();
-      
-      await chrome.runtime.sendMessage({
-        type: 'retainEntry',
-        entry: entry
-      });
 
     } catch (error) {
       console.error('Error opening note:', error);
@@ -193,40 +130,34 @@ class NoteManager {
     }
   }
 
-  async createNote(filename) {
-    if (!this.notebooksDir) {
-      console.error('Notebooks directory not initialized');
-      return false;
-    }
-
+  async createNote(title) {
     try {
-      let noteName = filename;
-      if (!noteName.endsWith('.txt')) {
-        noteName += '.txt';
+      if (!title.trim()) {
+        alert('请输入文件名');
+        return false;
       }
 
-      const existingNote = this.notes.find(n => n.name === noteName);
+      const existingNote = this.notes.find(n => n.title === title.trim());
       if (existingNote) {
         alert('文件名已存在，请使用其他名称');
         return false;
       }
 
-      const entry = await new Promise((resolve, reject) => {
-        this.notebooksDir.getFile(noteName, { create: true, exclusive: true }, resolve, reject);
-      });
-
-      const writable = await new Promise((resolve, reject) => {
-        entry.createWriter(resolve, reject);
-      });
-
-      writable.onwriteend = async () => {
-        await this.retainEntry(entry);
-        await this.listNotes();
-        await this.openNote(entry);
+      const newNote = {
+        id: Date.now().toString(),
+        title: title.trim(),
+        content: ''
       };
 
-      writable.write(new Blob([''], { type: 'text/plain' }));
-      return true;
+      const result = await chrome.runtime.sendMessage({ type: 'saveNote', note: newNote });
+      
+      if (result.success) {
+        this.notes = result.notes;
+        await this.openNote(newNote);
+        return true;
+      } else {
+        return false;
+      }
 
     } catch (error) {
       console.error('Error creating note:', error);
@@ -234,41 +165,43 @@ class NoteManager {
     }
   }
 
-  async retainEntry(entry) {
-    await chrome.runtime.sendMessage({
-      type: 'retainEntry',
-      entry: entry
-    });
-  }
-
   async saveCurrentNote() {
-    if (!this.currentEntry) {
+    if (!this.currentNote) {
       return false;
     }
 
     try {
       this.updateSaveStatus('saving');
       
+      const title = document.getElementById('noteTitle').value.trim();
       const content = document.getElementById('noteEditor').value;
+
+      if (!title) {
+        alert('请输入笔记标题');
+        this.updateSaveStatus('error');
+        return false;
+      }
+
+      const note = {
+        ...this.currentNote,
+        title: title,
+        content: content
+      };
+
+      const result = await chrome.runtime.sendMessage({ type: 'saveNote', note: note });
       
-      const writable = await new Promise((resolve, reject) => {
-        this.currentEntry.createWriter(resolve, reject);
-      });
-
-      return await new Promise((resolve, reject) => {
-        writable.onwriteend = () => {
-          this.currentContent = content;
-          this.updateSaveStatus('saved');
-          resolve(true);
-        };
-        
-        writable.onerror = (error) => {
-          this.updateSaveStatus('error');
-          reject(error);
-        };
-
-        writable.write(new Blob([content], { type: 'text/plain' }));
-      });
+      if (result.success) {
+        this.currentNote = note;
+        this.currentContent = content;
+        this.notes = result.notes;
+        this.updateSaveStatus('saved');
+        document.getElementById('currentFile').textContent = title + '.txt';
+        await this.listNotes();
+        return true;
+      } else {
+        this.updateSaveStatus('error');
+        return false;
+      }
 
     } catch (error) {
       console.error('Error saving note:', error);
@@ -278,31 +211,34 @@ class NoteManager {
   }
 
   async deleteNote() {
-    if (!this.currentEntry) {
+    if (!this.currentNote) {
       return false;
     }
 
     try {
-      await new Promise((resolve, reject) => {
-        this.currentEntry.remove(resolve, reject);
-      });
-
-      this.currentEntry = null;
-      this.currentContent = '';
-      document.getElementById('noteTitle').value = '';
-      document.getElementById('noteEditor').value = '';
-      document.getElementById('currentFile').textContent = '未选择文件';
-      document.getElementById('lastModified').textContent = '-';
-      this.updateCharCount();
-      this.updateSaveStatus('saved');
-
-      await this.listNotes();
+      const result = await chrome.runtime.sendMessage({ type: 'deleteNote', noteId: this.currentNote.id });
       
-      if (this.notes.length > 0) {
-        await this.openLatestNote();
-      }
+      if (result.success) {
+        this.currentNote = null;
+        this.currentContent = '';
+        document.getElementById('noteTitle').value = '';
+        document.getElementById('noteEditor').value = '';
+        document.getElementById('currentFile').textContent = '未选择文件';
+        document.getElementById('lastModified').textContent = '-';
+        this.updateCharCount();
+        this.updateSaveStatus('saved');
 
-      return true;
+        this.notes = result.notes;
+        await this.listNotes();
+        
+        if (this.notes.length > 0) {
+          await this.openLatestNote();
+        }
+
+        return true;
+      } else {
+        return false;
+      }
     } catch (error) {
       console.error('Error deleting note:', error);
       return false;
@@ -353,7 +289,6 @@ class NoteManager {
       
       this.autoSaveTimer = setTimeout(async () => {
         await this.saveCurrentNote();
-        await this.listNotes();
       }, 1500);
     }
   }
@@ -405,11 +340,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('saveBtn').addEventListener('click', async () => {
     await noteManager.saveCurrentNote();
-    await noteManager.listNotes();
   });
 
   document.getElementById('deleteBtn').addEventListener('click', () => {
-    if (noteManager.currentEntry) {
+    if (noteManager.currentNote) {
       document.getElementById('deleteModal').classList.add('show');
     }
   });
