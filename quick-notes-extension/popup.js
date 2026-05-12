@@ -245,6 +245,132 @@ class NoteManager {
     }
   }
 
+  async exportNotes() {
+    try {
+      const result = await chrome.runtime.sendMessage({ type: 'getNotes' });
+      
+      if (!result.success || !result.notes || result.notes.length === 0) {
+        alert('没有笔记可导出');
+        return false;
+      }
+
+      for (const note of result.notes) {
+        const fileName = `${note.title || 'untitled'}.txt`;
+        const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, '_');
+        const blob = new Blob([note.content || ''], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = safeFileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+
+      const metaBlob = new Blob([JSON.stringify(result.notes, null, 2)], { type: 'application/json' });
+      const metaUrl = URL.createObjectURL(metaBlob);
+      const metaLink = document.createElement('a');
+      metaLink.href = metaUrl;
+      metaLink.download = 'notes_meta.json';
+      document.body.appendChild(metaLink);
+      metaLink.click();
+      document.body.removeChild(metaLink);
+      URL.revokeObjectURL(metaUrl);
+
+      alert(`成功导出 ${result.notes.length} 条笔记和元数据文件`);
+      return true;
+    } catch (error) {
+      console.error('Error exporting notes:', error);
+      alert('导出失败: ' + error.message);
+      return false;
+    }
+  }
+
+  async importNotes() {
+    try {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.txt';
+      
+      const files = await new Promise((resolve) => {
+        input.onchange = () => resolve(Array.from(input.files));
+        input.click();
+      });
+
+      if (!files || files.length === 0) {
+        return false;
+      }
+
+      let importedCount = 0;
+      let skippedCount = 0;
+
+      for (const file of files) {
+        if (file.name.endsWith('.txt')) {
+          try {
+            const content = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = (e) => resolve(e.target.result);
+              reader.onerror = reject;
+              reader.readAsText(file);
+            });
+
+            const title = file.name.replace('.txt', '');
+
+            const existingNote = this.notes.find(n => n.title === title);
+            if (existingNote) {
+              const confirmOverwrite = confirm(`笔记 "${title}" 已存在，是否覆盖？`);
+              if (!confirmOverwrite) {
+                skippedCount++;
+                continue;
+              }
+              const note = {
+                ...existingNote,
+                content: content,
+                updatedAt: Date.now()
+              };
+              await chrome.runtime.sendMessage({ type: 'saveNote', note: note });
+            } else {
+              const newNote = {
+                id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                title: title,
+                content: content,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+              };
+              await chrome.runtime.sendMessage({ type: 'saveNote', note: newNote });
+            }
+            importedCount++;
+          } catch (error) {
+            console.error('Error importing file:', file.name, error);
+          }
+        }
+      }
+
+      await this.listNotes();
+      
+      let message = '';
+      if (importedCount > 0) {
+        message += `成功导入 ${importedCount} 条笔记`;
+      }
+      if (skippedCount > 0) {
+        message += (message ? '\n' : '') + `跳过 ${skippedCount} 条已存在的笔记`;
+      }
+      if (importedCount === 0 && skippedCount === 0) {
+        message = '没有找到可导入的笔记文件';
+      }
+      
+      alert(message);
+      return true;
+    } catch (error) {
+      console.error('Error importing notes:', error);
+      alert('导入失败: ' + error.message);
+      return false;
+    }
+  }
+
   updateCharCount() {
     const content = document.getElementById('noteEditor').value;
     const count = content.length;
@@ -372,6 +498,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('refreshBtn').addEventListener('click', async () => {
     await noteManager.listNotes();
+  });
+
+  document.getElementById('exportBtn').addEventListener('click', async () => {
+    await noteManager.exportNotes();
+  });
+
+  document.getElementById('importBtn').addEventListener('click', async () => {
+    await noteManager.importNotes();
   });
 
   document.getElementById('toggleSidebar').addEventListener('click', () => {
