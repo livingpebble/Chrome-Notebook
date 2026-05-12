@@ -55,10 +55,15 @@ body {
 .btn-primary {
   background: #4285f4;
   color: white;
+  padding: 6px;
 }
 
 .btn-primary:hover {
   background: #3367d6;
+}
+
+.btn-primary.btn-icon {
+  border-radius: 4px;
 }
 
 .btn-secondary {
@@ -83,10 +88,16 @@ body {
   padding: 6px;
   background: transparent;
   color: #666;
+  border-radius: 4px;
 }
 
 .btn-icon:hover {
-  background: #e0e0e0;
+  background: #e8eaed;
+  color: #333;
+}
+
+.btn-icon svg {
+  display: block;
 }
 
 .icon {

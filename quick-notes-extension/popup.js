@@ -36,7 +36,10 @@ class NoteManager {
     const notesList = document.getElementById('notesList');
     
     const filteredNotes = filter 
-      ? this.notes.filter(note => note.title.toLowerCase().includes(filter.toLowerCase()))
+      ? this.notes.filter(note => 
+          note.title.toLowerCase().includes(filter.toLowerCase()) || 
+          (note.content && note.content.toLowerCase().includes(filter.toLowerCase()))
+        )
       : this.notes;
 
     if (filteredNotes.length === 0) {
