@@ -172,6 +172,7 @@ class NoteManager {
       
       if (result.success) {
         this.notes = result.notes;
+        this.updateEditorVisibility();
         await this.openNote(newNote);
         return true;
       } else {
