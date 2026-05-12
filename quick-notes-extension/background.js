@@ -1,130 +1,80 @@
-let retainedEntries = [];
-
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
   console.log('QuickNotes extension installed');
+  
+  const { notes } = await chrome.storage.local.get('notes');
+  if (!notes) {
+    await chrome.storage.local.set({ notes: [] });
+  }
 });
 
 chrome.runtime.onStartup.addListener(() => {
   console.log('QuickNotes extension startup');
-  restoreRetainedEntries();
 });
-
-chrome.fileSystem.onRestored.addListener(() => {
-  console.log('File system access restored');
-  restoreRetainedEntries();
-});
-
-async function restoreRetainedEntries() {
-  const { retainedEntries: storedEntries } = await chrome.storage.local.get('retainedEntries');
-  if (storedEntries && storedEntries.length > 0) {
-    try {
-      const entries = await chrome.fileSystem.restoreEntries(storedEntries);
-      retainedEntries = entries;
-      console.log('Restored', entries.length, 'file entries');
-    } catch (error) {
-      console.error('Failed to restore entries:', error);
-      retainedEntries = [];
-    }
-  }
-}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'getNotebooksDirectory') {
-    getNotebooksDirectory().then(sendResponse);
+  if (message.type === 'getNotes') {
+    getNotes().then(sendResponse);
     return true;
   }
   
-  if (message.type === 'retainEntry') {
-    retainEntry(message.entry).then(sendResponse);
+  if (message.type === 'saveNote') {
+    saveNote(message.note).then(sendResponse);
     return true;
   }
   
-  if (message.type === 'chooseDirectory') {
-    chooseDirectory().then(sendResponse);
+  if (message.type === 'deleteNote') {
+    deleteNote(message.noteId).then(sendResponse);
     return true;
   }
 });
 
-async function getNotebooksDirectory() {
+async function getNotes() {
   try {
-    const { notebooksEntry } = await chrome.storage.local.get('notebooksEntry');
-    
-    if (notebooksEntry) {
-      try {
-        const entry = await chrome.fileSystem.restoreEntry(notebooksEntry.id, notebooksEntry.readable);
-        const writableEntry = await chrome.fileSystem.restoreEntry(notebooksEntry.id, notebooksEntry.writable);
-        
-        const dirReader = entry.createReader();
-        const entries = await new Promise((resolve, reject) => {
-          dirReader.readEntries(resolve, reject);
-        });
-        
-        return { success: true, entry: writableEntry || entry, isNew: false };
-      } catch (error) {
-        console.log('Stored entry no longer accessible, need to re-choose');
-      }
-    }
-    
-    return await chooseDirectory();
+    const { notes } = await chrome.storage.local.get('notes');
+    return { success: true, notes: notes || [] };
   } catch (error) {
-    console.error('Error getting notebooks directory:', error);
+    console.error('Error getting notes:', error);
     return { success: false, error: error.message };
   }
 }
 
-async function chooseDirectory() {
+async function saveNote(note) {
   try {
-    const entry = await chrome.fileSystem.chooseEntry({
-      type: 'openDirectory',
-      acceptsMultiple: false
-    });
+    const { notes } = await chrome.storage.local.get('notes');
+    const existingNotes = notes || [];
     
-    if (entry) {
-      const writableEntry = await chrome.fileSystem.retainEntry(entry);
-      
-      await chrome.storage.local.set({
-        notebooksEntry: {
-          id: writableEntry.id,
-          readable: true,
-          writable: true
-        },
-        retainedEntries: [...retainedEntries.map(e => ({ id: e.id, readable: true, writable: true })), {
-          id: writableEntry.id,
-          readable: true,
-          writable: true
-        }]
+    const noteIndex = existingNotes.findIndex(n => n.id === note.id);
+    if (noteIndex >= 0) {
+      existingNotes[noteIndex] = {
+        ...note,
+        updatedAt: Date.now()
+      };
+    } else {
+      existingNotes.unshift({
+        ...note,
+        id: note.id || Date.now().toString(),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
       });
-      
-      retainedEntries.push(entry);
-      
-      return { success: true, entry: entry, isNew: true };
     }
     
-    return { success: false, error: 'No directory selected' };
+    await chrome.storage.local.set({ notes: existingNotes });
+    return { success: true, notes: existingNotes };
   } catch (error) {
-    console.error('Error choosing directory:', error);
+    console.error('Error saving note:', error);
     return { success: false, error: error.message };
   }
 }
 
-async function retainEntry(entry) {
+async function deleteNote(noteId) {
   try {
-    const writableEntry = await chrome.fileSystem.retainEntry(entry);
-    retainedEntries.push(entry);
-    
-    const { retainedEntries: storedEntries } = await chrome.storage.local.get('retainedEntries');
-    const newStoredEntries = storedEntries || [];
-    newStoredEntries.push({
-      id: writableEntry.id,
-      readable: true,
-      writable: true
-    });
-    
-    await chrome.storage.local.set({ retainedEntries: newStoredEntries });
-    
-    return { success: true };
+    const { notes } = await chrome.storage.local.get('notes');
+    const existingNotes = notes || [];
+    const filteredNotes = existingNotes.filter(n => n.id !== noteId);
+    await chrome.storage.local.set({ notes: filteredNotes });
+    return { success: true, notes: filteredNotes };
   } catch (error) {
-    console.error('Error retaining entry:', error);
+    console.error('Error deleting note:', error);
     return { success: false, error: error.message };
   }
 }
